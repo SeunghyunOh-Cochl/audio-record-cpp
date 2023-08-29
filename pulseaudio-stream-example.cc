@@ -36,7 +36,7 @@
 #include <chrono>
 #include <iostream>
 
-
+#define TIME_EVENT_USEC 50000
 #define SAMPLE_RATE 22050
 #define BUF_SIZE (SAMPLE_RATE) / 2
 #define CLEAR_LINE "\x1B[K"
@@ -58,8 +58,13 @@ static void *buffer = NULL;
 static size_t buffer_length = 0, buffer_index = 0;
 
 static pa_context *context = NULL;
-static int verbose = 0;
 static pa_stream_flags_t flags;
+static int64_t ts = 0;
+
+static timeval timestamp{
+  .tv_sec = 0,
+  .tv_usec = 0
+};
 
 // static char *stream_name = NULL, *client_name = NULL, *device = NULL;
 
@@ -72,7 +77,7 @@ static pa_sample_spec sample_spec = {
     .channels = 1
 };
 static size_t latency = 0, process_time=0;
-
+static int verbose = 1;
 
 /* A shortcut for terminating the application */
 static void quit(int ret) {
@@ -231,6 +236,41 @@ static void stdout_callback(pa_mainloop_api*a, pa_io_event *e, int fd, pa_io_eve
     }
 }
 
+/* Show the current latency */
+static void stream_update_timing_callback(pa_stream *s, int success, void *userdata) {
+    pa_usec_t l, usec;
+    int negative = 0;
+
+    assert(s);
+
+    // if (!success ||
+    //     pa_stream_get_time(s, &usec) < 0 ||
+    //     pa_stream_get_latency(s, &l, &negative) < 0) {
+    //     fprintf(stderr, ("Failed to get latency: %s\n"), pa_strerror(pa_context_errno(context)));
+    //     quit(1);
+    //     return;
+    // }
+
+    // fprintf(stderr, ("Time: %0.3f sec; Latency: %0.0f usec.  \n\r"),
+    //         (float) usec / 1000000,
+    //         (float) l * (negative?-1.0f:1.0f));
+}
+
+static void get_latency(pa_stream *s)
+{
+	pa_usec_t l;
+	int negative;
+
+	pa_stream_get_timing_info(s);
+
+	if (pa_stream_get_latency(s, &l, &negative) != 0)
+	{
+		fprintf(stderr, "AUDIO: Pulseaudio pa_stream_get_latency() failed\n");
+		return;
+	}
+	latency = l; /*can only be negative in monitoring streams*/
+}
+
 static void do_stream_process(){
   static uint8_t _buffer[BUF_SIZE];
   static uint8_t _buffer_length = NULL;
@@ -244,8 +284,12 @@ static void stream_read_callback(pa_stream *s, size_t length, void *userdata){
 
     if (stdio_event)
       mainloop_api->io_enable(stdio_event, PA_IO_EVENT_OUTPUT);
+
+		if (verbose) {
+      get_latency(s);
+      fprintf(stdout, "length %ld read at %ld us\n", length, latency);
+    } else fprintf(stdout, "length %ld read \n", length);
     
-    fprintf(stderr, "length %ld read \n", length);
 
     if (pa_stream_peek(s, &data, &length) < 0) {
         fprintf(stderr, ("pa_stream_peek() failed: %s\n"), pa_strerror(pa_context_errno(context)));
@@ -340,6 +384,17 @@ fail:
     quit(1);
 }
 
+static void time_event_callback(pa_mainloop_api *m, pa_time_event *e, const struct timeval *tv, void *userdata) {
+    if (stream && pa_stream_get_state(stream) == PA_STREAM_READY) {
+        pa_operation *o;
+        if (!(o = pa_stream_update_timing_info(stream, stream_update_timing_callback, NULL)))
+            fprintf(stderr, ("pa_stream_update_timing_info() failed: %s\n"), pa_strerror(pa_context_errno(context)));
+        else
+            pa_operation_unref(o);
+    }
+    m->time_restart(e, pa_timeval_store(&timestamp, pa_rtclock_now() + TIME_EVENT_USEC));
+}
+
 // To run this example, install pulseaudio on your machine
 // sudo apt-get install -y libpulse-dev
 // Make sure pulseaudio is set on a valid input
@@ -352,6 +407,7 @@ int main(int argc, char *argv[]) {
   int ret = 1, r, c;
 
   pa_mainloop* m = NULL;
+  pa_time_event *time_event = NULL;
   char *bn, *server = NULL;
   int error;
   
@@ -380,13 +436,13 @@ int main(int argc, char *argv[]) {
   pa_signal_new(SIGINT, exit_signal_callback, NULL);
   pa_signal_new(SIGTERM, exit_signal_callback, NULL);
 
-  if (!(stdio_event = mainloop_api->io_new(mainloop_api,
-                                              mode == PLAYBACK ? STDIN_FILENO : STDOUT_FILENO,
-                                              mode == PLAYBACK ? PA_IO_EVENT_INPUT : PA_IO_EVENT_OUTPUT,
-                                              mode == PLAYBACK ? stdin_callback : stdout_callback, NULL))) {
-      fprintf(stderr, ("io_new() failed.\n"));
-      goto quit;
-  }
+//   if (!(stdio_event = mainloop_api->io_new(mainloop_api,
+//                                               mode == PLAYBACK ? STDIN_FILENO : STDOUT_FILENO,
+//                                               mode == PLAYBACK ? PA_IO_EVENT_INPUT : PA_IO_EVENT_OUTPUT,
+//                                               mode == PLAYBACK ? stdin_callback : stdout_callback, NULL))) {
+//       fprintf(stderr, ("io_new() failed.\n"));
+//       goto quit;
+//   }
 
   /* Create a new connection context */
   if (!(context = pa_context_new(mainloop_api,(char*) client_name.get()))) {
@@ -395,11 +451,19 @@ int main(int argc, char *argv[]) {
   }
 
   pa_context_set_state_callback(context, context_state_callback, NULL);
-
+  
   /* Connect the context */
   if (pa_context_connect(context, server, static_cast<pa_context_flags_t>(0) , NULL) < 0) {
       fprintf(stderr, ("pa_context_connect() failed: %s\n"), pa_strerror(pa_context_errno(context)));
       goto quit;
+  }
+
+
+  if (verbose) {
+      if (!(time_event = mainloop_api->time_new(mainloop_api, pa_timeval_store(&timestamp, pa_rtclock_now() + TIME_EVENT_USEC), time_event_callback, NULL))) {
+          fprintf(stderr, ("time_new() failed.\n"));
+          goto quit;
+      }
   }
   
   printf("mainloop...\n");
