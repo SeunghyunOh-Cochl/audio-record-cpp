@@ -1,7 +1,8 @@
 # How to record Audio on Linux ?
 
 ## Pulseaudio record
-## How to set device?
+### How to set device?
+
 1. check device name and which is recording device
 ```shell
 linaro@linaro-alip-tinker2:~/sense-sdk-cpp-tutorials$ arecord -l
