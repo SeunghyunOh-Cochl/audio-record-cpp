@@ -25,8 +25,8 @@ arecord -t wav -c 1 -D plughw:2,0 -f S16_LE -d 5 -r 16000 test.wav
 
 2. In my case, USB Audio Device is recording device. Then find out check device name in pulseaudio
 
-``user
-user:pacmd list-sources
+```shell
+user@user:~/$ pacmd list-sources
 ...
     index: 7
 	name: <alsa_input.usb-GeneralPlus_USB_Audio_Device-00.analog-mono>
