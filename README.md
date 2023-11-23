@@ -5,7 +5,7 @@
 
 1. check device name and which is recording device
 ```shell
-linaro@linaro-alip-tinker2:~/sense-sdk-cpp-tutorials$ arecord -l
+user@user:~/$ arecord -l
 **** List of CAPTURE Hardware Devices ****
 card 0: Device [USB Audio Device], device 0: USB Audio [USB Audio]
   Subdevices: 1/1
@@ -25,8 +25,8 @@ arecord -t wav -c 1 -D plughw:2,0 -f S16_LE -d 5 -r 16000 test.wav
 
 2. In my case, USB Audio Device is recording device. Then find out check device name in pulseaudio
 
-```shell
-linaro@linaro-alip-tinker2:pacmd list-sources
+``user
+user:pacmd list-sources
 ...
     index: 7
 	name: <alsa_input.usb-GeneralPlus_USB_Audio_Device-00.analog-mono>
